@@ -1,14 +1,14 @@
 
-import { useState, useEffect, useRef } from 'react';
-import type { ChangeEvent, MouseEvent, ReactNode } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import type { ChangeEvent, MouseEvent, KeyboardEvent, ReactNode } from 'react';
 import { 
-  Scissors, Image as ImageIcon, 
-  RefreshCw, Link as LinkIcon, Link2Off, 
+  Upload, Scissors, Image as ImageIcon, 
+  Trash2, RefreshCw, AlertCircle, Link as LinkIcon, Link2Off, 
   FileType, Layers, RotateCcw,
   Info, ZoomIn, ZoomOut, MousePointer, Pencil, Check, X,
-  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Move, Hand,
-  ChevronLeft, ChevronRight, Download, Undo, Redo,
-  Layout, Crop as CropIcon, Palette, Globe
+  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Square, Hand, Move,
+  ChevronLeft, ChevronRight, Scaling, Download, Undo, Redo,
+  Layout, Crop as CropIcon, Maximize, Palette, ChevronUp, Globe
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -310,9 +310,7 @@ const generateImageBlob = async (
 
         if (!GIFEncoder) throw new Error("GIF Library exports not found");
 
-        const ctx2 = finalCanvas.getContext('2d');
-        if (!ctx2) throw new Error("Could not get context for GIF");
-        const data = ctx2.getImageData(0, 0, finalCanvas.width, finalCanvas.height).data;
+        const data = finalCanvas.getContext('2d')?.getImageData(0, 0, finalCanvas.width, finalCanvas.height).data;
         if (!data) throw new Error('No image data');
 
         const palette = quantize(data, 256, { format: 'rgba4444' });
