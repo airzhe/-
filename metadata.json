@@ -1,0 +1,5 @@
+{
+  "name": "Emoji 切割器",
+  "description": "A specialized tool for slicing sticker sheets and emoji grids into individual transparent images. Features adjustable grid lines, padding control to remove black borders, and batch export.",
+  "requestFramePermissions": []
+}
