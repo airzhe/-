@@ -1,7 +1,7 @@
 
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ChangeEvent, MouseEvent, KeyboardEvent, ReactNode, PointerEvent } from 'react';
+import type { ChangeEvent, MouseEvent, KeyboardEvent, ReactNode } from 'react';
 import { 
   Upload, Scissors, Image as ImageIcon, 
   Trash2, RefreshCw, AlertCircle, Link as LinkIcon, Link2Off, 
@@ -10,7 +10,7 @@ import {
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Square, Hand, Move,
   ChevronLeft, ChevronRight, Scaling, Download, Undo, Redo,
   Layout, Crop as CropIcon, Maximize, Palette, ChevronUp, Globe,
-  Settings, Sliders
+  Settings, Sliders, Minus, Plus
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -453,8 +453,66 @@ const Sidebar = ({
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-xs font-semibold text-gray-700 mb-1.5">{t.rows}</label><input type="number" min="1" max="20" value={rows} onChange={(e) => setRows(Math.max(1, parseInt(e.target.value) || 1))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" /></div>
-                <div><label className="block text-xs font-semibold text-gray-700 mb-1.5">{t.cols}</label><input type="number" min="1" max="20" value={cols} onChange={(e) => setCols(Math.max(1, parseInt(e.target.value) || 1))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" /></div>
+                <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1.5">{t.rows}</label>
+                    <div className="flex items-center h-10">
+                        <button 
+                            onClick={() => setRows(Math.max(1, rows - 1))} 
+                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-l-lg text-gray-600 active:bg-gray-300 transition-colors"
+                        >
+                            <Minus className="w-4 h-4" />
+                        </button>
+                        <input 
+                            type="number" 
+                            min="1" 
+                            max="20" 
+                            value={rows} 
+                            onChange={(e) => { 
+                                const val = e.target.value;
+                                if(val === '') return; 
+                                const v = parseInt(val); 
+                                if(!isNaN(v)) setRows(Math.max(1, Math.min(20, v))); 
+                            }} 
+                            className="flex-1 h-full w-full text-center border-y border-gray-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 z-10 appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+                        />
+                        <button 
+                            onClick={() => setRows(Math.min(20, rows + 1))} 
+                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-r-lg text-gray-600 active:bg-gray-300 transition-colors"
+                        >
+                            <Plus className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1.5">{t.cols}</label>
+                    <div className="flex items-center h-10">
+                        <button 
+                            onClick={() => setCols(Math.max(1, cols - 1))} 
+                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-l-lg text-gray-600 active:bg-gray-300 transition-colors"
+                        >
+                            <Minus className="w-4 h-4" />
+                        </button>
+                        <input 
+                            type="number" 
+                            min="1" 
+                            max="20" 
+                            value={cols} 
+                            onChange={(e) => { 
+                                const val = e.target.value;
+                                if(val === '') return; 
+                                const v = parseInt(val); 
+                                if(!isNaN(v)) setCols(Math.max(1, Math.min(20, v))); 
+                            }} 
+                            className="flex-1 h-full w-full text-center border-y border-gray-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 z-10 appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+                        />
+                         <button 
+                            onClick={() => setCols(Math.min(20, cols + 1))} 
+                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-r-lg text-gray-600 active:bg-gray-300 transition-colors"
+                        >
+                            <Plus className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div>
