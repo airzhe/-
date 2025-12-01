@@ -1,6 +1,7 @@
 
+
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ChangeEvent, KeyboardEvent, ReactNode, PointerEvent as ReactPointerEvent } from 'react';
+import type { ChangeEvent, MouseEvent, KeyboardEvent, ReactNode, PointerEvent } from 'react';
 import { 
   Upload, Scissors, Image as ImageIcon, 
   Trash2, RefreshCw, AlertCircle, Link as LinkIcon, Link2Off, 
@@ -8,7 +9,8 @@ import {
   Info, ZoomIn, ZoomOut, MousePointer, Pencil, Check, X,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Square, Hand, Move,
   ChevronLeft, ChevronRight, Scaling, Download, Undo, Redo,
-  Layout, Crop as CropIcon, Maximize, Palette, ChevronUp, Globe
+  Layout, Crop as CropIcon, Maximize, Palette, ChevronUp, Globe,
+  Settings, Sliders
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -101,7 +103,10 @@ const translations: Record<Lang, Record<string, string>> = {
     row: "Row",
     col: "Col",
     savePrev: "Save & Prev",
-    saveNext: "Save & Next"
+    saveNext: "Save & Next",
+    adjust: "Adjust",
+    upload: "Upload",
+    done: "Done"
   },
   zh: {
     title: "MemeCut Pro",
@@ -153,7 +158,10 @@ const translations: Record<Lang, Record<string, string>> = {
     row: "行",
     col: "列",
     savePrev: "保存并上一张",
-    saveNext: "保存并下一张"
+    saveNext: "保存并下一张",
+    adjust: "调整",
+    upload: "上传",
+    done: "完成"
   },
   ja: {
     title: "MemeCut Pro",
@@ -205,7 +213,10 @@ const translations: Record<Lang, Record<string, string>> = {
     row: "行",
     col: "列",
     savePrev: "保存して前へ",
-    saveNext: "保存して次へ"
+    saveNext: "保存して次へ",
+    adjust: "調整",
+    upload: "アップロード",
+    done: "完了"
   }
 };
 
@@ -393,7 +404,7 @@ const Sidebar = ({
         <div className="flex items-center justify-between text-indigo-600 mb-2">
             <div className="flex items-center gap-2"><Scissors className="w-6 h-6" /><h1 className="text-xl font-bold tracking-tight text-gray-900">{t.title}</h1></div>
             <div className="flex items-center gap-2">
-                <div className="relative group">
+                <div className="relative group md:block hidden">
                     <Globe className="w-4 h-4 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <select 
                         value={lang} 
@@ -405,7 +416,9 @@ const Sidebar = ({
                         <option value="ja">日本語</option>
                     </select>
                 </div>
-                <button onClick={toggleSidebar} className="md:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><X className="w-6 h-6" /></button>
+                <button onClick={toggleSidebar} className="md:hidden px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-bold text-gray-600 flex items-center gap-1">
+                    {t.done} <Check className="w-4 h-4" />
+                </button>
             </div>
         </div>
 
@@ -480,7 +493,8 @@ const Sidebar = ({
             </div>
         </div>
         <div className="flex-1" />
-        <button onClick={() => { onSplit(); if(window.innerWidth < 768) toggleSidebar(); }} disabled={!hasImage || isProcessing} className={`w-full py-4 md:py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 font-bold text-white shadow-lg shadow-indigo-200 transition-all transform hover:scale-[1.02] active:scale-[0.98] ${!hasImage || isProcessing ? 'bg-gray-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500'}`}>
+        {/* Mobile: Split button moved to bottom bar, showing here only on Desktop */}
+        <button onClick={onSplit} disabled={!hasImage || isProcessing} className={`hidden md:flex w-full py-4 md:py-3.5 px-4 rounded-xl items-center justify-center gap-2 font-bold text-white shadow-lg shadow-indigo-200 transition-all transform hover:scale-[1.02] active:scale-[0.98] ${!hasImage || isProcessing ? 'bg-gray-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500'}`}>
             {isProcessing ? (<><RefreshCw className="w-5 h-5 animate-spin" />{t.processing}</>) : (<><Check className="w-5 h-5" />{t.splitBtn}</>)}
         </button>
       </div>
@@ -527,14 +541,14 @@ const PreviewArea = ({
 
   const handleZoom = (delta: number) => setZoom(z => Math.max(0.1, Math.min(5, z + delta)));
   
-  const handlePointerDown = (e: ReactPointerEvent) => { 
+  const handlePointerDown = (e: PointerEvent) => { 
       if (!imageSrc) return; 
       setIsDragging(true); 
       lastPointerPos.current = { x: e.clientX, y: e.clientY }; 
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
   };
 
-  const handlePointerMove = (e: ReactPointerEvent) => {
+  const handlePointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
       const dx = e.clientX - lastPointerPos.current.x;
       const dy = e.clientY - lastPointerPos.current.y;
@@ -542,7 +556,7 @@ const PreviewArea = ({
       lastPointerPos.current = { x: e.clientX, y: e.clientY };
   };
 
-  const handlePointerUp = (e: ReactPointerEvent) => {
+  const handlePointerUp = (e: PointerEvent) => {
       setIsDragging(false);
       const target = e.currentTarget as Element;
       if (target.hasPointerCapture(e.pointerId)) {
@@ -558,9 +572,9 @@ const PreviewArea = ({
   };
 
   return (
-    <div className="flex-1 relative bg-gray-100 flex flex-col h-full touch-none" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
+    <div className="flex-1 relative bg-gray-100 flex flex-col h-full touch-none pb-20 md:pb-0" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
         <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
-            {!sidebarOpen && <button onClick={(e) => { e.stopPropagation(); toggleSidebar(); }} className="p-3 md:p-2 bg-white rounded-lg shadow text-gray-600 hover:text-indigo-600 transition-colors"><ChevronRight className="w-6 h-6 md:w-5 md:h-5" /></button>}
+            {!sidebarOpen && <button onClick={(e) => { e.stopPropagation(); toggleSidebar(); }} className="p-3 md:p-2 bg-white rounded-lg shadow text-gray-600 hover:text-indigo-600 transition-colors hidden md:block"><ChevronRight className="w-6 h-6 md:w-5 md:h-5" /></button>}
              <div className="bg-white/90 backdrop-blur shadow-sm rounded-lg p-1.5 flex flex-col gap-1">
                 <button onClick={(e) => { e.stopPropagation(); handleZoom(0.1); }} className="p-2 md:p-1.5 hover:bg-gray-100 rounded text-gray-600" title="Zoom In"><ZoomIn className="w-5 h-5 md:w-4 md:h-4" /></button>
                 <button onClick={(e) => { e.stopPropagation(); handleZoom(-0.1); }} className="p-2 md:p-1.5 hover:bg-gray-100 rounded text-gray-600" title="Zoom Out"><ZoomOut className="w-5 h-5 md:w-4 md:h-4" /></button>
@@ -692,15 +706,15 @@ const SingleAdjustModal = ({
         ctx.drawImage(srcImage, rect.x, rect.y, safeRectW, safeRectH, startX, startY, safeRectW, safeRectH);
     }, [rect, margins, offset, isSquare, srcImage, bgColor]);
 
-    const handlePointerDown = (e: ReactPointerEvent) => { setIsDragging(true); setDragStart({ x: e.clientX, y: e.clientY }); (e.currentTarget as Element).setPointerCapture(e.pointerId); };
-    const handlePointerMove = (e: ReactPointerEvent) => {
+    const handlePointerDown = (e: PointerEvent) => { setIsDragging(true); setDragStart({ x: e.clientX, y: e.clientY }); (e.currentTarget as Element).setPointerCapture(e.pointerId); };
+    const handlePointerMove = (e: PointerEvent) => {
         if (!isDragging) return; const dx = (e.clientX - dragStart.x); const dy = (e.clientY - dragStart.y); setDragStart({ x: e.clientX, y: e.clientY });
         if (tool === 'pan') { setViewPan(p => ({ x: p.x + dx, y: p.y + dy })); } else {
             const moveX = dx / zoom; const moveY = dy / zoom;
             if (activeTab === 'crop') { setRect(r => ({...r, x: r.x - moveX, y: r.y - moveY})); } else { if (isSquare) { setOffset(p => ({ x: p.x + moveX, y: p.y + moveY })); } else { setMargins(p => ({ ...p, left: p.left + moveX, top: p.top + moveY })); } }
         }
     };
-    const handlePointerUp = (e: ReactPointerEvent) => { 
+    const handlePointerUp = (e: PointerEvent) => { 
         setIsDragging(false); 
         const target = e.currentTarget as Element;
         if (target.hasPointerCapture(e.pointerId)) {
@@ -713,7 +727,7 @@ const SingleAdjustModal = ({
     const handleInputChange = (field: 'w'|'h', valStr: string) => { const val = parseInt(valStr); if (valStr === '') return; if (!isNaN(val)) { setRect(r => ({...r, [field]: Math.max(1, val)})); } };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-0 md:p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-0 md:p-4">
             <div className="bg-white md:rounded-xl shadow-2xl w-full max-w-5xl h-[100dvh] md:h-[85vh] flex flex-col md:flex-row overflow-hidden">
                 <div className="w-full md:w-80 bg-white border-t md:border-t-0 md:border-r border-gray-200 flex flex-col order-2 md:order-1 h-1/2 md:h-full z-10">
                     <div className="p-3 md:p-4 border-b border-gray-200 flex items-center justify-between">
@@ -793,7 +807,7 @@ const ResultsGallery = ({
     results: SplitResult[], onClose: () => void, onDownloadAll: () => void, onEdit: (res: SplitResult) => void, t: any
 }) => {
     return (
-        <div className="fixed inset-0 z-50 bg-gray-100 flex flex-col animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[60] bg-gray-100 flex flex-col animate-in fade-in duration-300">
             <div className="bg-white shadow-sm border-b border-gray-200 p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3"><button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600"><ArrowLeft className="w-5 h-5" /></button><h2 className="text-xl font-bold text-gray-800">{t.resultsTitle} <span className="ml-2 text-sm font-normal text-gray-500">({results.length} {t.images})</span></h2></div>
                 <div className="flex gap-3"><button onClick={onDownloadAll} className="px-4 py-2.5 md:px-5 md:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-200 font-medium flex items-center gap-2 transition-transform active:scale-95 text-sm md:text-base"><Download className="w-4 h-4" /> {t.downloadAll}</button></div>
@@ -987,7 +1001,7 @@ export const App = () => {
     };
 
     // Use PointerEvent for better mobile support
-    const onLineDragStart = (e: ReactPointerEvent, type: 'row' | 'col', index: number) => {
+    const onLineDragStart = (e: PointerEvent, type: 'row' | 'col', index: number) => {
         e.preventDefault();
         e.stopPropagation();
         const target = e.currentTarget as HTMLElement;
@@ -1024,7 +1038,15 @@ export const App = () => {
     const handleSplit = async () => {
         if (!imageElement) return;
         setIsProcessing(true);
+        // Ensure sidebar is closed on mobile when splitting to show results
+        if (window.innerWidth < 768) {
+            setSidebarOpen(false);
+        }
+        
         try {
+            // Small delay to allow UI to update (close sidebar) before heavy work
+            await new Promise(r => setTimeout(r, 50));
+            
             const newResults: SplitResult[] = [];
             const sortedRows = [...rowPositions].sort((a, b) => a - b);
             const sortedCols = [...colPositions].sort((a, b) => a - b);
@@ -1097,6 +1119,32 @@ export const App = () => {
                         t={t}
                         imageElement={imageElement}
                     />
+                    
+                    {/* Mobile Bottom Navigation Bar */}
+                    <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 z-40 flex items-center justify-between px-6 pb-safe">
+                        <div className="relative flex flex-col items-center justify-center gap-1 text-gray-500 hover:text-indigo-600">
+                            <input type="file" accept="image/*" onChange={handleUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                            <Upload className="w-5 h-5" />
+                            <span className="text-[10px] font-medium">{t.upload}</span>
+                        </div>
+                        
+                        <button 
+                            onClick={() => setSidebarOpen(!sidebarOpen)} 
+                            className={`flex flex-col items-center justify-center gap-1 ${sidebarOpen ? 'text-indigo-600' : 'text-gray-500 hover:text-indigo-600'}`}
+                        >
+                            <Sliders className="w-5 h-5" />
+                            <span className="text-[10px] font-medium">{t.adjust}</span>
+                        </button>
+                        
+                        <button 
+                            onClick={handleSplit}
+                            disabled={!imageSrc || isProcessing}
+                            className={`flex flex-col items-center justify-center gap-1 font-bold ${!imageSrc || isProcessing ? 'text-gray-300' : 'text-indigo-600'}`}
+                        >
+                            {isProcessing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Scissors className="w-5 h-5" />}
+                            <span className="text-[10px] font-medium">{t.splitBtn}</span>
+                        </button>
+                    </div>
                 </div>
             </div>
             {results && <ResultsGallery results={results} onClose={() => setResults(null)} onDownloadAll={handleDownloadAll} onEdit={(res) => setEditingResult(res)} t={t} />}
