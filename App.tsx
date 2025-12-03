@@ -1,16 +1,14 @@
 
-
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ChangeEvent, MouseEvent, KeyboardEvent, ReactNode } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type { ChangeEvent, ReactNode } from 'react';
 import { 
   Upload, Scissors, Image as ImageIcon, 
-  Trash2, RefreshCw, AlertCircle, Link as LinkIcon, Link2Off, 
+  RefreshCw, Link as LinkIcon, Link2Off, 
   FileType, Layers, RotateCcw,
   Info, ZoomIn, ZoomOut, MousePointer, Pencil, Check, X,
-  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Square, Hand, Move,
-  ChevronLeft, ChevronRight, Scaling, Download, Undo, Redo,
-  Layout, Crop as CropIcon, Maximize, Palette, ChevronUp, Globe,
-  Settings, Sliders, Minus, Plus
+  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Move,
+  ChevronLeft, ChevronRight, Download, Undo, Redo,
+  Layout, Crop as CropIcon, Palette, Sliders, Minus, Plus, Globe
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -60,7 +58,8 @@ const translations: Record<Lang, Record<string, string>> = {
     supportType: "Supports PNG, JPG, GIF, WebP",
     step2: "2. Grid Adjustment",
     reset: "Reset",
-    dragRedLine: "Drag red lines to adjust. Click line to fine-tune with arrow keys.",
+    dragRedLine: "Drag red lines to adjust.",
+    fineTuneHint: "Tap arrow buttons to fine-tune.",
     shiftFast: "Hold Shift for faster movement.",
     rows: "Rows",
     cols: "Cols",
@@ -104,9 +103,9 @@ const translations: Record<Lang, Record<string, string>> = {
     col: "Col",
     savePrev: "Save & Prev",
     saveNext: "Save & Next",
-    adjust: "Adjust",
     upload: "Upload",
-    done: "Done"
+    adjust: "Adjust",
+    nudge: "Nudge"
   },
   zh: {
     title: "MemeCut Pro",
@@ -115,7 +114,8 @@ const translations: Record<Lang, Record<string, string>> = {
     supportType: "支持 PNG, JPG, GIF, WebP",
     step2: "2. 网格调整 (Grid)",
     reset: "重置",
-    dragRedLine: "拖拽红线调整，点击选中(蓝色)后可用方向键微调。",
+    dragRedLine: "拖拽红线调整。",
+    fineTuneHint: "点击下方按钮微调。",
     shiftFast: "按住 Shift + 方向键可快速移动。",
     rows: "行数 (Rows)",
     cols: "列数 (Cols)",
@@ -159,9 +159,9 @@ const translations: Record<Lang, Record<string, string>> = {
     col: "列",
     savePrev: "保存并上一张",
     saveNext: "保存并下一张",
-    adjust: "调整",
     upload: "上传",
-    done: "完成"
+    adjust: "调整",
+    nudge: "微调"
   },
   ja: {
     title: "MemeCut Pro",
@@ -170,7 +170,8 @@ const translations: Record<Lang, Record<string, string>> = {
     supportType: "PNG, JPG, GIF, WebP 対応",
     step2: "2. グリッド調整",
     reset: "リセット",
-    dragRedLine: "赤線をドラッグして調整。選択後に矢印キーで微調整可。",
+    dragRedLine: "赤線をドラッグして調整。",
+    fineTuneHint: "下のボタンで微調整できます。",
     shiftFast: "Shiftキーで高速移動。",
     rows: "行数 (Rows)",
     cols: "列数 (Cols)",
@@ -214,9 +215,9 @@ const translations: Record<Lang, Record<string, string>> = {
     col: "列",
     savePrev: "保存して前へ",
     saveNext: "保存して次へ",
-    adjust: "調整",
     upload: "アップロード",
-    done: "完了"
+    adjust: "調整",
+    nudge: "微調整"
   }
 };
 
@@ -319,7 +320,24 @@ const generateImageBlob = async (
         const quantize = gifModule.quantize || gifModule.default?.quantize;
         const applyPalette = gifModule.applyPalette || gifModule.default?.applyPalette;
 
-        if (!GIFEncoder) throw new Error("GIF Library exports not found");
+        if (!GIFEncoder || !quantize || !applyPalette) {
+             const { GIFEncoder: GE, quantize: Q, applyPalette: AP } = await import('https://esm.sh/gifenc@1.0.3');
+             if (!GE) throw new Error("GIF Library exports not found in fallback");
+             
+             const data = finalCanvas.getContext('2d')?.getImageData(0, 0, finalCanvas.width, finalCanvas.height).data;
+             if (!data) throw new Error('No image data');
+             const palette = Q(data, 256, { format: 'rgba4444' });
+             const index = AP(data, palette, 'rgba4444');
+             const encoder = new GE();
+             encoder.writeFrame(index, finalCanvas.width, finalCanvas.height, { 
+                palette: palette, 
+                transparent: bgColor !== 'white' ? 0 : undefined,
+                delay: 0,
+                repeat: 0
+             });
+             encoder.finish();
+             return new Blob([encoder.bytes()], { type: 'image/gif' });
+        }
 
         const data = finalCanvas.getContext('2d')?.getImageData(0, 0, finalCanvas.width, finalCanvas.height).data;
         if (!data) throw new Error('No image data');
@@ -348,26 +366,74 @@ const generateImageBlob = async (
 
 // --- Components ---
 
+const CompactNumberInput = ({ value, onChange, min, max }: { value: number, onChange: (v: number) => void, min: number, max: number }) => {
+    return (
+        <div className="flex items-center w-full">
+            <button 
+                onClick={() => onChange(Math.max(min, value - 1))}
+                className="w-10 h-10 flex items-center justify-center bg-gray-50 border border-gray-200 rounded-l-lg hover:bg-gray-100 active:bg-gray-200 transition-colors text-gray-600"
+            >
+                <Minus className="w-4 h-4" />
+            </button>
+            <input 
+                type="number" 
+                min={min} 
+                max={max} 
+                value={value} 
+                onChange={(e) => onChange(Math.max(min, parseInt(e.target.value) || min))} 
+                className="flex-1 h-10 text-center border-y border-gray-200 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+            />
+            <button 
+                onClick={() => onChange(Math.min(max, value + 1))}
+                className="w-10 h-10 flex items-center justify-center bg-gray-50 border border-gray-200 rounded-r-lg hover:bg-gray-100 active:bg-gray-200 transition-colors text-gray-600"
+            >
+                <Plus className="w-4 h-4" />
+            </button>
+        </div>
+    );
+};
+
 const CompactDirectionControl = ({ 
     onMove, label, centerContent
 }: { 
     onMove: (dir: 'up'|'down'|'left'|'right', val: number) => void,
-    label: string,
+    label?: string,
     centerContent?: ReactNode
 }) => {
     return (
-        <div className="flex flex-col items-center gap-1 p-2 bg-white rounded-xl border border-gray-100 shadow-sm select-none touch-none">
-            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider mb-1">{label}</span>
+        <div className="flex flex-col items-center gap-1 p-2 bg-white rounded-xl border border-gray-100 shadow-sm select-none">
+            {label && <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider mb-1">{label}</span>}
             <div className="grid grid-cols-3 gap-1">
                 <div />
-                <button onClick={() => onMove('up', 1)} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowUp className="w-5 h-5 md:w-4 md:h-4" /></button>
+                <button onClick={() => onMove('up', 1)} className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowUp className="w-4 h-4" /></button>
                 <div />
-                <button onClick={() => onMove('left', 1)} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowLeft className="w-5 h-5 md:w-4 md:h-4" /></button>
-                <div className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center text-xs font-bold text-indigo-600">{centerContent || <Move className="w-5 h-5 md:w-4 md:h-4 text-gray-300" />}</div>
-                <button onClick={() => onMove('right', 1)} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowRight className="w-5 h-5 md:w-4 md:h-4" /></button>
+                <button onClick={() => onMove('left', 1)} className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowLeft className="w-4 h-4" /></button>
+                <div className="w-8 h-8 flex items-center justify-center text-xs font-bold text-indigo-600">{centerContent || <Move className="w-4 h-4 text-gray-300" />}</div>
+                <button onClick={() => onMove('right', 1)} className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowRight className="w-4 h-4" /></button>
                 <div />
-                <button onClick={() => onMove('down', 1)} className="w-10 h-10 md:w-8 md:h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowDown className="w-5 h-5 md:w-4 md:h-4" /></button>
+                <button onClick={() => onMove('down', 1)} className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-gray-600 active:bg-gray-200 transition-colors"><ArrowDown className="w-4 h-4" /></button>
                 <div />
+            </div>
+        </div>
+    );
+};
+
+const NudgeControl = ({ 
+    onNudge, label
+}: { 
+    onNudge: (dir: 'up'|'down'|'left'|'right', fast: boolean) => void,
+    label: string
+}) => {
+    return (
+        <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 mb-4 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-indigo-800 uppercase tracking-wider flex items-center gap-2"><Move className="w-3 h-3" /> {label}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => onNudge('left', false)} className="h-8 flex items-center justify-center bg-white border border-indigo-100 rounded text-indigo-600 hover:bg-indigo-50"><ArrowLeft className="w-4 h-4" /></button>
+                <button onClick={() => onNudge('right', false)} className="h-8 flex items-center justify-center bg-white border border-indigo-100 rounded text-indigo-600 hover:bg-indigo-50"><ArrowRight className="w-4 h-4" /></button>
+                <button onClick={() => onNudge('up', false)} className="h-8 flex items-center justify-center bg-white border border-indigo-100 rounded text-indigo-600 hover:bg-indigo-50"><ArrowUp className="w-4 h-4" /></button>
+                <button onClick={() => onNudge('down', false)} className="h-8 flex items-center justify-center bg-white border border-indigo-100 rounded text-indigo-600 hover:bg-indigo-50"><ArrowDown className="w-4 h-4" /></button>
             </div>
         </div>
     );
@@ -385,7 +451,9 @@ const Sidebar = ({
   onSplit, hasImage, isProcessing,
   onResetGrid, isOpen, toggleSidebar,
   canUndo, canRedo, onUndo, onRedo,
-  t, lang, setLang
+  selectedLine,
+  t, lang, setLang,
+  onNudge
 }: any) => {
   const handlePaddingChange = (val: number, axis: 'x' | 'y') => {
     if (linkPadding) { setPaddingX(val); setPaddingY(val); }
@@ -393,18 +461,30 @@ const Sidebar = ({
   };
   const isPreset = outputSize === 'auto' || [128, 240, 512].includes(outputSize as number);
 
-  // Mobile: Sidebar acts as an overlay (fixed). Desktop: It's part of the flow (static/relative).
-  const sidebarClasses = isOpen
-    ? 'fixed inset-0 z-50 w-full md:static md:w-80 lg:w-96 translate-x-0'
-    : 'fixed -translate-x-full z-50 w-full md:static md:w-0 md:opacity-0 md:overflow-hidden';
+  const containerClasses = `
+    font-sans bg-white shadow-xl z-50 transition-all duration-300 ease-in-out
+    md:h-full md:border-r md:static md:shadow-none
+    ${isOpen ? 'md:w-80 lg:w-96 md:opacity-100 md:translate-x-0' : 'md:w-0 md:opacity-0 md:overflow-hidden md:-translate-x-full'}
+
+    /* Mobile Bottom Sheet Styles */
+    fixed bottom-0 left-0 right-0 
+    h-[65vh] rounded-t-2xl 
+    ${isOpen ? 'translate-y-0' : 'translate-y-full'}
+    md:rounded-none md:translate-y-0
+  `;
 
   return (
-    <div className={`bg-white shadow-xl border-r border-gray-200 h-full overflow-y-auto font-sans transition-all duration-300 ease-in-out flex flex-col shrink-0 ${sidebarClasses}`}>
-      <div className="p-5 flex flex-col gap-5 min-w-[320px] pb-24 md:pb-5">
-        <div className="flex items-center justify-between text-indigo-600 mb-2">
+    <div className={containerClasses}>
+      {/* Mobile Drag Handle */}
+      <div className="md:hidden w-full flex justify-center pt-3 pb-1" onClick={toggleSidebar}>
+        <div className="w-12 h-1.5 bg-gray-200 rounded-full" />
+      </div>
+
+      <div className="p-5 flex flex-col gap-5 min-w-[320px] h-full overflow-y-auto pb-24 md:pb-5">
+        <div className="flex items-center justify-between text-indigo-600 mb-2 md:flex hidden">
             <div className="flex items-center gap-2"><Scissors className="w-6 h-6" /><h1 className="text-xl font-bold tracking-tight text-gray-900">{t.title}</h1></div>
             <div className="flex items-center gap-2">
-                <div className="relative group md:block hidden">
+                <div className="relative group">
                     <Globe className="w-4 h-4 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <select 
                         value={lang} 
@@ -416,13 +496,12 @@ const Sidebar = ({
                         <option value="ja">日本語</option>
                     </select>
                 </div>
-                <button onClick={toggleSidebar} className="md:hidden px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-bold text-gray-600 flex items-center gap-1">
-                    {t.done} <Check className="w-4 h-4" />
-                </button>
+                <button onClick={toggleSidebar} className="md:hidden p-2 text-gray-500"><ChevronLeft /></button>
             </div>
         </div>
 
-        <div className="space-y-3">
+        {/* Step 1: Upload - Hide on mobile if image exists to save space */}
+        <div className={`space-y-3 ${hasImage ? 'hidden md:block' : ''}`}>
             <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider flex items-center gap-2">
             <div className="w-6 h-6 rounded bg-indigo-100 flex items-center justify-center text-indigo-600">1</div>{t.step1}</h2>
             <div className="relative group">
@@ -441,85 +520,41 @@ const Sidebar = ({
                     <div className="w-6 h-6 rounded bg-indigo-100 flex items-center justify-center text-indigo-600">2</div>{t.step2}
                 </div>
                 <div className="flex gap-1">
-                    <button onClick={onUndo} disabled={!canUndo} className="p-2 md:p-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-600" title="Undo (Ctrl+Z)"><Undo className="w-4 h-4 md:w-3.5 md:h-3.5" /></button>
-                    <button onClick={onRedo} disabled={!canRedo} className="p-2 md:p-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-600" title="Redo (Ctrl+Shift+Z)"><Redo className="w-4 h-4 md:w-3.5 md:h-3.5" /></button>
-                    <button onClick={onResetGrid} className="text-[10px] flex items-center gap-1 text-gray-500 hover:text-indigo-600 bg-gray-100 px-3 py-1.5 md:px-2 md:py-1 rounded hover:bg-indigo-50 transition-colors ml-2"><RotateCcw className="w-3 h-3" /> {t.reset}</button>
+                    <button onClick={onUndo} disabled={!canUndo} className="p-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-600" title="Undo (Ctrl+Z)"><Undo className="w-3.5 h-3.5" /></button>
+                    <button onClick={onRedo} disabled={!canRedo} className="p-1 rounded bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-600" title="Redo (Ctrl+Shift+Z)"><Redo className="w-3.5 h-3.5" /></button>
+                    <button onClick={onResetGrid} className="text-[10px] flex items-center gap-1 text-gray-500 hover:text-indigo-600 bg-gray-100 px-2 py-1 rounded hover:bg-indigo-50 transition-colors ml-2"><RotateCcw className="w-3 h-3" /> {t.reset}</button>
                 </div>
             </h2>
             
             <div className="text-xs text-indigo-700 bg-indigo-50 p-2.5 rounded border border-indigo-100 flex flex-col gap-2">
                 <div className="flex gap-2"><MousePointer className="w-4 h-4 flex-shrink-0" /><span>{t.dragRedLine}</span></div>
-                <div className="flex gap-2"><Info className="w-4 h-4 flex-shrink-0" /><span>{t.shiftFast}</span></div>
+                <div className="flex gap-2 md:hidden"><Info className="w-4 h-4 flex-shrink-0" /><span>{t.fineTuneHint}</span></div>
+                <div className="hidden md:flex gap-2"><Info className="w-4 h-4 flex-shrink-0" /><span>{t.shiftFast}</span></div>
             </div>
+
+            {/* Mobile Nudge Controls - visible only when a line is selected */}
+            {selectedLine && (
+                <div className="md:hidden">
+                    <NudgeControl label={t.nudge} onNudge={(dir, fast) => onNudge(dir, fast, selectedLine)} />
+                </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1.5">{t.rows}</label>
-                    <div className="flex items-center h-10">
-                        <button 
-                            onClick={() => setRows(Math.max(1, rows - 1))} 
-                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-l-lg text-gray-600 active:bg-gray-300 transition-colors"
-                        >
-                            <Minus className="w-4 h-4" />
-                        </button>
-                        <input 
-                            type="number" 
-                            min="1" 
-                            max="20" 
-                            value={rows} 
-                            onChange={(e) => { 
-                                const val = e.target.value;
-                                if(val === '') return; 
-                                const v = parseInt(val); 
-                                if(!isNaN(v)) setRows(Math.max(1, Math.min(20, v))); 
-                            }} 
-                            className="flex-1 h-full w-full text-center border-y border-gray-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 z-10 appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                        />
-                        <button 
-                            onClick={() => setRows(Math.min(20, rows + 1))} 
-                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-r-lg text-gray-600 active:bg-gray-300 transition-colors"
-                        >
-                            <Plus className="w-4 h-4" />
-                        </button>
-                    </div>
+                    <CompactNumberInput value={rows} min={1} max={20} onChange={setRows} />
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1.5">{t.cols}</label>
-                    <div className="flex items-center h-10">
-                        <button 
-                            onClick={() => setCols(Math.max(1, cols - 1))} 
-                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-l-lg text-gray-600 active:bg-gray-300 transition-colors"
-                        >
-                            <Minus className="w-4 h-4" />
-                        </button>
-                        <input 
-                            type="number" 
-                            min="1" 
-                            max="20" 
-                            value={cols} 
-                            onChange={(e) => { 
-                                const val = e.target.value;
-                                if(val === '') return; 
-                                const v = parseInt(val); 
-                                if(!isNaN(v)) setCols(Math.max(1, Math.min(20, v))); 
-                            }} 
-                            className="flex-1 h-full w-full text-center border-y border-gray-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 z-10 appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
-                        />
-                         <button 
-                            onClick={() => setCols(Math.min(20, cols + 1))} 
-                            className="w-10 h-full flex items-center justify-center bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-r-lg text-gray-600 active:bg-gray-300 transition-colors"
-                        >
-                            <Plus className="w-4 h-4" />
-                        </button>
-                    </div>
+                    <CompactNumberInput value={cols} min={1} max={20} onChange={setCols} />
                 </div>
             </div>
 
             <div>
-                <div className="flex items-center justify-between mb-1.5"><label className="text-xs font-semibold text-gray-700">{t.padding}</label><button onClick={() => setLinkPadding(!linkPadding)} className={`p-1 rounded hover:bg-gray-100 ${linkPadding ? 'text-indigo-600' : 'text-gray-400'}`} title={t.link}>{linkPadding ? <LinkIcon className="w-4 h-4 md:w-3 md:h-3" /> : <Link2Off className="w-4 h-4 md:w-3 md:h-3" />}</button></div>
-                <div className="space-y-4 md:space-y-3 bg-gray-50 p-4 md:p-3 rounded-lg border border-gray-100">
-                    <div className="flex items-center gap-2"><span className="text-xs text-gray-400 w-3">H</span><input type="range" min="0" max="50" value={paddingX} onChange={(e) => handlePaddingChange(parseInt(e.target.value), 'x')} className="flex-1 h-4 md:h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" /><span className="text-xs text-gray-500 w-6 text-right">{paddingX}px</span></div>
-                    <div className="flex items-center gap-2"><span className="text-xs text-gray-400 w-3">V</span><input type="range" min="0" max="50" value={paddingY} onChange={(e) => handlePaddingChange(parseInt(e.target.value), 'y')} className="flex-1 h-4 md:h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" /><span className="text-xs text-gray-500 w-6 text-right">{paddingY}px</span></div>
+                <div className="flex items-center justify-between mb-1.5"><label className="text-xs font-semibold text-gray-700">{t.padding}</label><button onClick={() => setLinkPadding(!linkPadding)} className={`p-1 rounded hover:bg-gray-100 ${linkPadding ? 'text-indigo-600' : 'text-gray-400'}`} title={t.link}>{linkPadding ? <LinkIcon className="w-3 h-3" /> : <Link2Off className="w-3 h-3" />}</button></div>
+                <div className="space-y-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <div className="flex items-center gap-2"><span className="text-xs text-gray-400 w-3">H</span><input type="range" min="0" max="50" value={paddingX} onChange={(e) => handlePaddingChange(parseInt(e.target.value), 'x')} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" /><span className="text-xs text-gray-500 w-6 text-right">{paddingX}px</span></div>
+                    <div className="flex items-center gap-2"><span className="text-xs text-gray-400 w-3">V</span><input type="range" min="0" max="50" value={paddingY} onChange={(e) => handlePaddingChange(parseInt(e.target.value), 'y')} className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" /><span className="text-xs text-gray-500 w-6 text-right">{paddingY}px</span></div>
                     <p className="text-[10px] text-gray-400 leading-tight">{t.paddingTip}</p>
                 </div>
             </div>
@@ -531,14 +566,14 @@ const Sidebar = ({
                  <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-2">{t.format}</label>
                     <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => setFormat('png')} className={`flex items-center justify-center gap-2 px-3 py-2.5 md:py-2 rounded-lg border text-sm transition-all ${format === 'png' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 ring-1 ring-indigo-500' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}><FileType className="w-4 h-4" /> {t.pngRec}</button>
-                        <button onClick={() => setFormat('gif')} className={`flex items-center justify-center gap-2 px-3 py-2.5 md:py-2 rounded-lg border text-sm transition-all ${format === 'gif' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 ring-1 ring-indigo-500' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}><Layers className="w-4 h-4" /> {t.gifAnim}</button>
+                        <button onClick={() => setFormat('png')} className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${format === 'png' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 ring-1 ring-indigo-500' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}><FileType className="w-4 h-4" /> {t.pngRec}</button>
+                        <button onClick={() => setFormat('gif')} className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${format === 'gif' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 ring-1 ring-indigo-500' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}><Layers className="w-4 h-4" /> {t.gifAnim}</button>
                     </div>
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-2">{t.unifiedSize}</label>
                     <div className="relative">
-                        <select value={typeof outputSize === 'number' && ![128, 240, 512].includes(outputSize) ? 'custom' : outputSize} onChange={(e) => { const val = e.target.value; if (val === 'custom') setOutputSize(512); else setOutputSize(val === 'auto' ? 'auto' : parseInt(val)); }} className="w-full px-3 py-2.5 md:py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                        <select value={typeof outputSize === 'number' && ![128, 240, 512].includes(outputSize) ? 'custom' : outputSize} onChange={(e) => { const val = e.target.value; if (val === 'custom') setOutputSize(512); else setOutputSize(val === 'auto' ? 'auto' : parseInt(val)); }} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500">
                             <option value="auto">{t.autoOriginal}</option>
                             <option value="128">128 x 128 px (Emoji)</option>
                             <option value="240">240 x 240 px (WeChat)</option>
@@ -550,9 +585,10 @@ const Sidebar = ({
                 </div>
             </div>
         </div>
-        <div className="flex-1" />
-        {/* Mobile: Split button moved to bottom bar, showing here only on Desktop */}
-        <button onClick={onSplit} disabled={!hasImage || isProcessing} className={`hidden md:flex w-full py-4 md:py-3.5 px-4 rounded-xl items-center justify-center gap-2 font-bold text-white shadow-lg shadow-indigo-200 transition-all transform hover:scale-[1.02] active:scale-[0.98] ${!hasImage || isProcessing ? 'bg-gray-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500'}`}>
+        
+        {/* Only show large split button on Desktop, Mobile has it in bottom nav */}
+        <div className="flex-1 hidden md:block" />
+        <button onClick={onSplit} disabled={!hasImage || isProcessing} className={`hidden md:flex w-full py-3.5 px-4 rounded-xl items-center justify-center gap-2 font-bold text-white shadow-lg shadow-indigo-200 transition-all transform hover:scale-[1.02] active:scale-[0.98] ${!hasImage || isProcessing ? 'bg-gray-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500'}`}>
             {isProcessing ? (<><RefreshCw className="w-5 h-5 animate-spin" />{t.processing}</>) : (<><Check className="w-5 h-5" />{t.splitBtn}</>)}
         </button>
       </div>
@@ -561,101 +597,140 @@ const Sidebar = ({
 };
 
 const PreviewArea = ({
-  imageSrc, rows, cols, rowPositions, colPositions, paddingX, paddingY, onLineDragStart, selectedLine, setSelectedLine, sidebarOpen, toggleSidebar, t,
-  imageElement
+  imageSrc, rows, cols, rowPositions, colPositions, paddingX, paddingY, onLineDragStart, selectedLine, setSelectedLine, sidebarOpen, toggleSidebar, t
 }: any) => {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const lastPointerPos = useRef({ x: 0, y: 0 });
+  const [imgDim, setImgDim] = useState({ w: 0, h: 0 }); // Explicit image dimensions
+  const lastMousePos = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-fit image to screen when loaded
   const fitImageToScreen = useCallback(() => {
-    if (!imageElement || !containerRef.current) return;
-    const containerW = containerRef.current.clientWidth;
-    const containerH = containerRef.current.clientHeight;
-    const imgW = imageElement.naturalWidth;
-    const imgH = imageElement.naturalHeight;
-    
-    // Add some padding (e.g., 40px)
-    const padding = 40;
-    const availableW = Math.max(100, containerW - padding);
-    const availableH = Math.max(100, containerH - padding);
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const img = document.querySelector('#preview-img') as HTMLImageElement;
+    if (img && img.naturalWidth && img.naturalHeight) {
+        setImgDim({ w: img.naturalWidth, h: img.naturalHeight }); // Lock container dimensions
+        const isMobile = window.innerWidth < 768;
+        const padX = isMobile ? 32 : 64; 
+        const padY = isMobile ? 80 : 80;
+        
+        const scaleX = (rect.width - padX) / img.naturalWidth;
+        const scaleY = (rect.height - padY) / img.naturalHeight;
+        const scale = Math.min(scaleX, scaleY, 1); 
+        setZoom(scale);
+        setPan({ x: 0, y: 0 });
+    }
+  }, []);
 
-    const scale = Math.min(availableW / imgW, availableH / imgH, 1); // Max scale 1 (100%) initially to avoid upscaling blur, remove ", 1" if you want to upscale tiny images
-    
-    setZoom(scale);
-    setPan({ x: 0, y: 0 });
-  }, [imageElement]);
+  useEffect(() => { 
+      if (imageSrc) {
+          fitImageToScreen();
+          const timer = setTimeout(fitImageToScreen, 100); // Retry for safety
+          return () => clearTimeout(timer);
+      }
+  }, [imageSrc, fitImageToScreen]);
 
   useEffect(() => {
-    fitImageToScreen();
-    // Re-fit on resize (optional but good for rotation)
-    const handleResize = () => fitImageToScreen();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+      const el = containerRef.current;
+      if (!el) return;
+      const observer = new ResizeObserver(() => {
+          if (imageSrc) fitImageToScreen();
+      });
+      observer.observe(el);
+      window.addEventListener('resize', fitImageToScreen);
+      return () => {
+          observer.disconnect();
+          window.removeEventListener('resize', fitImageToScreen);
+      }
   }, [imageSrc, fitImageToScreen]);
+
+  useEffect(() => {
+      if (imageSrc) setTimeout(fitImageToScreen, 200);
+  }, [sidebarOpen, imageSrc, fitImageToScreen]);
 
   const handleZoom = (delta: number) => setZoom(z => Math.max(0.1, Math.min(5, z + delta)));
   
-  const handlePointerDown = (e: PointerEvent) => { 
-      if (!imageSrc) return; 
-      setIsDragging(true); 
-      lastPointerPos.current = { x: e.clientX, y: e.clientY }; 
-      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  const onPointerDown = (e: React.PointerEvent) => {
+      if (!imageSrc) return;
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      setIsDragging(true);
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
   };
 
-  const handlePointerMove = (e: PointerEvent) => {
+  const onPointerMove = (e: React.PointerEvent) => {
       if (!isDragging) return;
-      const dx = e.clientX - lastPointerPos.current.x;
-      const dy = e.clientY - lastPointerPos.current.y;
+      const dx = e.clientX - lastMousePos.current.x;
+      const dy = e.clientY - lastMousePos.current.y;
       setPan(p => ({ x: p.x + dx, y: p.y + dy }));
-      lastPointerPos.current = { x: e.clientX, y: e.clientY };
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
   };
 
-  const handlePointerUp = (e: PointerEvent) => {
+  const onPointerUp = (e: React.PointerEvent) => {
       setIsDragging(false);
-      const target = e.currentTarget as Element;
-      if (target.hasPointerCapture(e.pointerId)) {
-        target.releasePointerCapture(e.pointerId);
-      }
+      try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch(err) {}
   };
 
   const handleBackgroundClick = () => {
       setSelectedLine(null);
-      if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-      }
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   };
 
   return (
-    <div className="flex-1 relative bg-gray-100 flex flex-col h-full touch-none pb-20 md:pb-0" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
-            {!sidebarOpen && <button onClick={(e) => { e.stopPropagation(); toggleSidebar(); }} className="p-3 md:p-2 bg-white rounded-lg shadow text-gray-600 hover:text-indigo-600 transition-colors hidden md:block"><ChevronRight className="w-6 h-6 md:w-5 md:h-5" /></button>}
+    <div className="flex-1 relative bg-gray-100 flex flex-col overflow-hidden min-h-0" 
+         onPointerDown={onPointerDown} 
+         onPointerMove={onPointerMove} 
+         onPointerUp={onPointerUp} 
+         onPointerLeave={onPointerUp}>
+        
+        {/* Floating Controls */}
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-2 pointer-events-auto">
+            {!sidebarOpen && <button onClick={(e) => { e.stopPropagation(); toggleSidebar(); }} className="hidden md:block p-2 bg-white rounded-lg shadow text-gray-600 hover:text-indigo-600"><ChevronRight /></button>}
              <div className="bg-white/90 backdrop-blur shadow-sm rounded-lg p-1.5 flex flex-col gap-1">
-                <button onClick={(e) => { e.stopPropagation(); handleZoom(0.1); }} className="p-2 md:p-1.5 hover:bg-gray-100 rounded text-gray-600" title="Zoom In"><ZoomIn className="w-5 h-5 md:w-4 md:h-4" /></button>
-                <button onClick={(e) => { e.stopPropagation(); handleZoom(-0.1); }} className="p-2 md:p-1.5 hover:bg-gray-100 rounded text-gray-600" title="Zoom Out"><ZoomOut className="w-5 h-5 md:w-4 md:h-4" /></button>
-                <button onClick={(e) => { e.stopPropagation(); fitImageToScreen(); }} className="p-2 md:p-1.5 hover:bg-gray-100 rounded text-gray-600 text-xs font-bold" title="Reset / Fit">FIT</button>
+                <button onClick={(e) => { e.stopPropagation(); handleZoom(0.1); }} className="p-2 hover:bg-gray-100 rounded text-gray-600" title="Zoom In"><ZoomIn className="w-5 h-5" /></button>
+                <button onClick={(e) => { e.stopPropagation(); handleZoom(-0.1); }} className="p-2 hover:bg-gray-100 rounded text-gray-600" title="Zoom Out"><ZoomOut className="w-5 h-5" /></button>
+                <button onClick={(e) => { e.stopPropagation(); fitImageToScreen(); }} className="p-2 hover:bg-gray-100 rounded text-gray-600 text-xs font-bold" title="Fit">FIT</button>
             </div>
         </div>
-        <div ref={containerRef} className="flex-1 flex items-center justify-center p-4 md:p-8 cursor-grab active:cursor-grabbing" onClick={handleBackgroundClick}>
+
+        {/* Absolute Centering Container */}
+        <div ref={containerRef} className="w-full h-full relative cursor-grab active:cursor-grabbing touch-none select-none overflow-hidden" onClick={handleBackgroundClick}>
             {!imageSrc ? (
-            <div className="text-center text-gray-400"><ImageIcon className="w-12 h-12 md:w-16 md:h-16 mx-auto mb-4 text-gray-300" /><p className="text-lg">{t.previewArea}</p><p className="text-sm">{t.previewTip}</p></div>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="text-center text-gray-400 p-6">
+                    <ImageIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                    <p className="text-lg font-medium">{t.previewArea}</p>
+                    <p className="text-sm opacity-60">{t.previewTip}</p>
+                </div>
+            </div>
             ) : (
-            <div className="relative shadow-2xl bg-white bg-checkerboard inline-flex select-none touch-none" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: 'center', transition: isDragging ? 'none' : 'transform 0.1s ease-out' }}>
-                <img src={imageSrc} alt="Preview" className="max-w-none pointer-events-none block" draggable={false} />
+            <div 
+                className="absolute left-1/2 top-1/2 shadow-xl bg-white bg-checkerboard touch-none origin-center"
+                style={{ 
+                    // Explicitly set width/height to match image to prevent collapse
+                    width: imgDim.w > 0 ? imgDim.w : 'auto',
+                    height: imgDim.h > 0 ? imgDim.h : 'auto',
+                    transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, 
+                    transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+                    // REMOVED overflow-hidden to allow edge lines to be fully visible and touchable
+                }}
+            >
+                <img key={imageSrc} id="preview-img" src={imageSrc} alt="Preview" className="max-w-none pointer-events-none block select-none" onLoad={fitImageToScreen} draggable={false} />
+                
+                {/* Overlays */}
                 <div className="absolute top-0 left-0 right-0 bg-black/50 pointer-events-none" style={{ height: `${rowPositions[0]}%` }} />
                 <div className="absolute bottom-0 left-0 right-0 bg-black/50 pointer-events-none" style={{ top: `${rowPositions[rowPositions.length-1]}%` }} />
                 <div className="absolute top-0 bottom-0 left-0 bg-black/50 pointer-events-none" style={{ width: `${colPositions[0]}%` }} />
                 <div className="absolute top-0 bottom-0 right-0 bg-black/50 pointer-events-none" style={{ left: `${colPositions[colPositions.length-1]}%` }} />
-                <div className="absolute inset-0">
+                
+                <div className="absolute inset-0 z-10">
                     {rowPositions.map((pos: number, i: number) => {
                         const isSelected = selectedLine?.type === 'row' && selectedLine.index === i;
                         return (
-                        <div key={`row-${i}`} className={`absolute left-0 right-0 h-6 -mt-3 md:h-4 md:-mt-2 cursor-ns-resize group hover:z-30 touch-none ${isSelected ? 'z-20' : 'z-10'}`} style={{ top: `${pos}%` }}
-                            onPointerDown={(e) => { e.stopPropagation(); onLineDragStart(e, 'row', i); setSelectedLine({type:'row', index:i}); if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }} onClick={(e) => e.stopPropagation()}>
-                            <div className={`absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 pointer-events-none transition-colors ${isSelected ? 'bg-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.5)]' : 'bg-red-500/80 group-hover:bg-indigo-400 shadow-[0_0_2px_rgba(255,255,255,0.8)]'}`} />
+                        <div key={`row-${i}`} className={`absolute left-0 right-0 h-6 -mt-3 cursor-ns-resize group touch-none ${isSelected ? 'z-30' : 'z-20'}`} style={{ top: `${pos}%` }}
+                            onPointerDown={(e) => { e.stopPropagation(); onLineDragStart(e, 'row', i); setSelectedLine({type:'row', index:i}); }}>
+                            <div className={`absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 md:h-0.5 pointer-events-none transition-colors duration-200 ring-1 ring-white/50 ${isSelected ? 'bg-blue-500 shadow-[0_0_0_2px_rgba(59,130,246,0.3)] h-1 md:h-0.5' : 'bg-red-500 shadow-[0_0_2px_rgba(255,255,255,0.8)]'}`} />
                             {paddingY > 0 && (<>{i > 0 && <div className="absolute left-0 right-0 bottom-1/2 bg-yellow-400/30 border-b border-yellow-500/50 pointer-events-none" style={{ height: `${paddingY}px` }} />}{i < rowPositions.length - 1 && <div className="absolute left-0 right-0 top-1/2 bg-yellow-400/30 border-t border-yellow-500/50 pointer-events-none" style={{ height: `${paddingY}px` }} />}</>)}
                             <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-full px-1 bg-blue-500 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none hidden md:block">{i === 0 || i === rowPositions.length - 1 ? t.edge : `${t.row} ${i}`}</div>
                         </div>
@@ -663,9 +738,9 @@ const PreviewArea = ({
                     {colPositions.map((pos: number, i: number) => {
                         const isSelected = selectedLine?.type === 'col' && selectedLine.index === i;
                         return (
-                        <div key={`col-${i}`} className={`absolute top-0 bottom-0 w-6 -ml-3 md:w-4 md:-ml-2 cursor-ew-resize group hover:z-30 touch-none ${isSelected ? 'z-20' : 'z-10'}`} style={{ left: `${pos}%` }}
-                            onPointerDown={(e) => { e.stopPropagation(); onLineDragStart(e, 'col', i); setSelectedLine({type:'col', index:i}); if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); }} onClick={(e) => e.stopPropagation()}>
-                             <div className={`absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-0.5 pointer-events-none transition-colors ${isSelected ? 'bg-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.5)]' : 'bg-red-500/80 group-hover:bg-indigo-400 shadow-[0_0_2px_rgba(255,255,255,0.8)]'}`} />
+                        <div key={`col-${i}`} className={`absolute top-0 bottom-0 w-6 -ml-3 cursor-ew-resize group touch-none ${isSelected ? 'z-30' : 'z-20'}`} style={{ left: `${pos}%` }}
+                            onPointerDown={(e) => { e.stopPropagation(); onLineDragStart(e, 'col', i); setSelectedLine({type:'col', index:i}); }}>
+                             <div className={`absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-0.5 md:w-0.5 pointer-events-none transition-colors duration-200 ring-1 ring-white/50 ${isSelected ? 'bg-blue-500 shadow-[0_0_0_2px_rgba(59,130,246,0.3)] w-1 md:w-0.5' : 'bg-red-500 shadow-[0_0_2px_rgba(255,255,255,0.8)]'}`} />
                              {paddingX > 0 && (<>{i > 0 && <div className="absolute top-0 bottom-0 right-1/2 bg-yellow-400/30 border-r border-yellow-500/50 pointer-events-none" style={{ width: `${paddingX}px` }} />}{i < colPositions.length - 1 && <div className="absolute top-0 bottom-0 left-1/2 bg-yellow-400/30 border-l border-yellow-500/50 pointer-events-none" style={{ width: `${paddingX}px` }} />}</>)}
                              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full px-1 bg-blue-500 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none hidden md:block">{i === 0 || i === colPositions.length - 1 ? t.edge : `${t.col} ${i}`}</div>
                         </div>
@@ -712,13 +787,10 @@ const SingleAdjustModal = ({
 
     const handleBgChange = (color: string) => { setBgColor(color); userPrefBgColor.current = color; };
     const handleIsSquareChange = (val: boolean) => { setIsSquare(val); userPrefIsSquare.current = val; };
-
     const handleSaveWithNavigation = async (direction: 'next' | 'prev' | 'close') => {
         setIsSaving(true);
         const format = (result.extension === 'gif') ? 'gif' : 'png';
-        const blob = await generateImageBlob(
-            srcImage, rect, margins, offset, isSquare, bgColor, result.outputSize || 'auto', format
-        );
+        const blob = await generateImageBlob(srcImage, rect, margins, offset, isSquare, bgColor, result.outputSize || 'auto', format);
         onSave(blob, { margins, offset, isSquare, originalRect: rect, bgColor }, direction === 'close' ? 'close' : 'stay');
         setIsSaving(false);
         if (direction === 'next') onNext();
@@ -729,131 +801,153 @@ const SingleAdjustModal = ({
         const handleKeyDown = (e: globalThis.KeyboardEvent) => {
             if (e.altKey && e.key === 'ArrowRight' && hasNext) handleSaveWithNavigation('next');
             if (e.altKey && e.key === 'ArrowLeft' && hasPrev) handleSaveWithNavigation('prev');
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && !e.altKey) {
-                e.preventDefault();
-                const step = e.shiftKey ? 10 : 1;
-                if (activeTab === 'crop') {
-                     setRect(prev => {
-                        const newR = { ...prev };
-                        if (e.key === 'ArrowUp') newR.y -= step; if (e.key === 'ArrowDown') newR.y += step; if (e.key === 'ArrowLeft') newR.x -= step; if (e.key === 'ArrowRight') newR.x += step; return newR;
-                     });
-                } else {
-                     if (isSquare || isFixedSize) {
-                         setOffset(prev => { const n = { ...prev }; if (e.key === 'ArrowUp') n.y -= step; if (e.key === 'ArrowDown') n.y += step; if (e.key === 'ArrowLeft') n.x -= step; if (e.key === 'ArrowRight') n.x += step; return n; })
-                     } else {
-                         setMargins(prev => { const n = { ...prev }; if (e.key === 'ArrowUp') n.top -= step; if (e.key === 'ArrowDown') n.top += step; if (e.key === 'ArrowLeft') n.left -= step; if (e.key === 'ArrowRight') n.left += step; return n; });
-                     }
-                }
-            }
-            if (e.code === 'Space') setTool('pan');
         };
-        const handleKeyUp = (e: globalThis.KeyboardEvent) => { if (e.code === 'Space') setTool('move'); }
-        window.addEventListener('keydown', handleKeyDown); window.addEventListener('keyup', handleKeyUp);
-        return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); };
-    }, [activeTab, isSquare, isFixedSize, hasNext, hasPrev, rect, margins, offset, bgColor]);
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [hasNext, hasPrev]);
 
     useEffect(() => {
-        const canvas = canvasRef.current; if (!canvas) return; const ctx = canvas.getContext('2d'); if (!ctx) return;
-        const w = Math.max(1, rect.w + margins.left + margins.right); const h = Math.max(1, rect.h + margins.top + margins.bottom);
-        const finalW = isSquare ? Math.max(w, h) : w; const finalH = isSquare ? Math.max(w, h) : h;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const w = Math.max(1, rect.w + margins.left + margins.right);
+        const h = Math.max(1, rect.h + margins.top + margins.bottom);
+        const finalW = isSquare ? Math.max(w, h) : w;
+        const finalH = isSquare ? Math.max(w, h) : h;
         canvas.width = finalW; canvas.height = finalH;
         if (bgColor === 'white') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, finalW, finalH); } else { ctx.clearRect(0, 0, finalW, finalH); }
-        const contentW = rect.w + margins.left + margins.right; const contentH = rect.h + margins.top + margins.bottom;
-        const startX = (finalW - contentW) / 2 + margins.left + offset.x; const startY = (finalH - contentH) / 2 + margins.top + offset.y;
-        const safeRectW = Math.max(1, rect.w); const safeRectH = Math.max(1, rect.h);
+        const contentW = rect.w + margins.left + margins.right;
+        const contentH = rect.h + margins.top + margins.bottom;
+        const startX = (finalW - contentW) / 2 + margins.left + offset.x;
+        const startY = (finalH - contentH) / 2 + margins.top + offset.y;
+        const safeRectW = Math.max(1, rect.w);
+        const safeRectH = Math.max(1, rect.h);
         ctx.drawImage(srcImage, rect.x, rect.y, safeRectW, safeRectH, startX, startY, safeRectW, safeRectH);
     }, [rect, margins, offset, isSquare, srcImage, bgColor]);
 
-    const handlePointerDown = (e: PointerEvent) => { setIsDragging(true); setDragStart({ x: e.clientX, y: e.clientY }); (e.currentTarget as Element).setPointerCapture(e.pointerId); };
-    const handlePointerMove = (e: PointerEvent) => {
-        if (!isDragging) return; const dx = (e.clientX - dragStart.x); const dy = (e.clientY - dragStart.y); setDragStart({ x: e.clientX, y: e.clientY });
-        if (tool === 'pan') { setViewPan(p => ({ x: p.x + dx, y: p.y + dy })); } else {
-            const moveX = dx / zoom; const moveY = dy / zoom;
-            if (activeTab === 'crop') { setRect(r => ({...r, x: r.x - moveX, y: r.y - moveY})); } else { if (isSquare) { setOffset(p => ({ x: p.x + moveX, y: p.y + moveY })); } else { setMargins(p => ({ ...p, left: p.left + moveX, top: p.top + moveY })); } }
+    const handlePointerDown = (e: React.PointerEvent) => {
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        setIsDragging(true);
+        setDragStart({ x: e.clientX, y: e.clientY });
+    };
+
+    const handlePointerMove = (e: React.PointerEvent) => {
+        if (!isDragging) return;
+        const dx = (e.clientX - dragStart.x); 
+        const dy = (e.clientY - dragStart.y);
+        setDragStart({ x: e.clientX, y: e.clientY });
+        
+        if (tool === 'pan') { 
+            setViewPan(p => ({ x: p.x + dx, y: p.y + dy })); 
+        } else {
+            const moveX = dx / zoom; 
+            const moveY = dy / zoom;
+            if (activeTab === 'crop') { 
+                setRect(r => ({...r, x: r.x - moveX, y: r.y - moveY})); 
+            } else { 
+                if (isSquare) { 
+                    setOffset(p => ({ x: p.x + moveX, y: p.y + moveY })); 
+                } else { 
+                    setMargins(p => ({ ...p, left: p.left + moveX, top: p.top + moveY })); 
+                } 
+            }
         }
     };
-    const handlePointerUp = (e: PointerEvent) => { 
-        setIsDragging(false); 
-        const target = e.currentTarget as Element;
-        if (target.hasPointerCapture(e.pointerId)) {
-            target.releasePointerCapture(e.pointerId);
-        }
+
+    const handlePointerUp = (e: React.PointerEvent) => {
+        setIsDragging(false);
+        try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch(err) {}
     };
+
     const handleDirectionMove = (dir: 'up'|'down'|'left'|'right', val: number) => {
         if (activeTab === 'crop') { setRect(prev => { const newR = { ...prev }; if (dir === 'up') newR.y -= val; if (dir === 'down') newR.y += val; if (dir === 'left') newR.x -= val; if (dir === 'right') newR.x += val; return newR; }); } else { if (isSquare) { setOffset(prev => { const n = { ...prev }; if (dir === 'up') n.y -= val; if (dir === 'down') n.y += val; if (dir === 'left') n.x -= val; if (dir === 'right') n.x += val; return n; }) } else { setMargins(prev => { const n = { ...prev }; if (dir === 'up') n.top -= val; if (dir === 'down') n.top += val; if (dir === 'left') n.left -= val; if (dir === 'right') n.left += val; return n; }); } }
     };
-    const handleInputChange = (field: 'w'|'h', valStr: string) => { const val = parseInt(valStr); if (valStr === '') return; if (!isNaN(val)) { setRect(r => ({...r, [field]: Math.max(1, val)})); } };
 
-    return (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-0 md:p-4">
-            <div className="bg-white md:rounded-xl shadow-2xl w-full max-w-5xl h-[100dvh] md:h-[85vh] flex flex-col md:flex-row overflow-hidden">
-                <div className="w-full md:w-80 bg-white border-t md:border-t-0 md:border-r border-gray-200 flex flex-col order-2 md:order-1 h-1/2 md:h-full z-10">
-                    <div className="p-3 md:p-4 border-b border-gray-200 flex items-center justify-between">
-                        <h3 className="font-bold text-lg flex items-center gap-2 text-gray-800"><Pencil className="w-5 h-5 text-indigo-600" /> {t.fineTune}</h3>
-                        <div className="flex gap-1">
-                            <button onClick={() => handleSaveWithNavigation('prev')} disabled={!hasPrev} className="p-2 md:p-1.5 hover:bg-gray-100 rounded disabled:opacity-30" title={`${t.savePrev} (Alt+Left)`}><ChevronLeft className="w-6 h-6 md:w-5 md:h-5" /></button>
-                            <button onClick={() => handleSaveWithNavigation('next')} disabled={!hasNext} className="p-2 md:p-1.5 hover:bg-gray-100 rounded disabled:opacity-30" title={`${t.saveNext} (Alt+Right)`}><ChevronRight className="w-6 h-6 md:w-5 md:h-5" /></button>
-                            <div className="w-px h-6 bg-gray-200 mx-1"></div>
-                            <button onClick={onClose} className="p-2 md:p-1.5 hover:bg-gray-100 rounded text-gray-500"><X className="w-6 h-6 md:w-5 md:h-5" /></button>
-                        </div>
-                    </div>
-                    <div className="flex border-b border-gray-200">
-                        <button onClick={() => setActiveTab('crop')} className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors border-b-2 ${activeTab === 'crop' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}><CropIcon className="w-4 h-4" /> {t.cropTab}</button>
-                        <button onClick={() => setActiveTab('layout')} className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors border-b-2 ${activeTab === 'layout' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}><Layout className="w-4 h-4" /> {t.canvasTab}</button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
-                        {activeTab === 'crop' ? (
-                            <div className="space-y-4 md:space-y-6">
-                                <CompactDirectionControl onMove={handleDirectionMove} label={t.moveSel} centerContent={<span className="text-[10px] text-gray-400">{t.pos}</span>} />
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">{t.size}</label>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                            <span className="text-xs text-gray-400">W</span>
-                                            <div className="flex-1 flex justify-between items-center"><button onClick={() => setRect(r => ({...r, w: r.w-1}))} className="w-8 h-8 md:w-6 md:h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">-</button><input type="number" value={Math.round(rect.w)} onChange={(e) => handleInputChange('w', e.target.value)} className="w-12 text-center bg-transparent font-mono font-medium text-sm focus:outline-none focus:border-b border-indigo-300 appearance-none m-0"/><button onClick={() => setRect(r => ({...r, w: r.w+1}))} className="w-8 h-8 md:w-6 md:h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">+</button></div>
-                                        </div>
-                                        <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                            <span className="text-xs text-gray-400">H</span>
-                                            <div className="flex-1 flex justify-between items-center"><button onClick={() => setRect(r => ({...r, h: r.h-1}))} className="w-8 h-8 md:w-6 md:h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">-</button><input type="number" value={Math.round(rect.h)} onChange={(e) => handleInputChange('h', e.target.value)} className="w-12 text-center bg-transparent font-mono font-medium text-sm focus:outline-none focus:border-b border-indigo-300 appearance-none m-0"/><button onClick={() => setRect(r => ({...r, h: r.h+1}))} className="w-8 h-8 md:w-6 md:h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">+</button></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="space-y-4 md:space-y-6">
-                                <CompactDirectionControl onMove={handleDirectionMove} label={t.moveContent} centerContent={<Move className="w-4 h-4 text-indigo-500" />} />
-                                <div className="space-y-3">
-                                    <label className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isSquare ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500' : 'bg-white border-gray-200 hover:bg-gray-50'}`}><input type="checkbox" checked={isSquare} onChange={(e) => !isFixedSize && handleIsSquareChange(e.target.checked)} disabled={isFixedSize} className="w-5 h-5 md:w-4 md:h-4 text-indigo-600 rounded focus:ring-indigo-500" /><div><span className="text-sm font-bold text-gray-800 block">{t.autoSquare}</span></div>{isFixedSize && <span className="ml-auto text-[10px] bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded font-bold">{t.locked}</span>}</label>
-                                    <div className="p-3 rounded-xl border border-gray-200 bg-white space-y-2">
-                                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2"><Palette className="w-3 h-3" /> {t.background}</span>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <button onClick={() => handleBgChange('transparent')} className={`px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-2 border ${bgColor === 'transparent' ? 'bg-checkerboard border-indigo-500 text-indigo-700 shadow-sm ring-1 ring-indigo-500' : 'bg-gray-50 border-transparent text-gray-500 hover:bg-gray-100'}`}><div className="w-3 h-3 border bg-white/50" /> {t.trans}</button>
-                                            <button onClick={() => handleBgChange('white')} className={`px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-2 border ${bgColor === 'white' ? 'bg-white border-indigo-500 text-indigo-700 shadow-sm ring-1 ring-indigo-500' : 'bg-gray-50 border-transparent text-gray-500 hover:bg-gray-100'}`}><div className="w-3 h-3 border bg-white" /> {t.white}</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                    <div className="p-4 md:p-5 border-t border-gray-200 bg-gray-50 flex gap-3">
-                        <button onClick={onClose} className="flex-1 py-3 md:py-2.5 text-sm text-gray-600 hover:bg-white hover:shadow-sm border border-transparent hover:border-gray-200 rounded-xl font-medium transition-all">{t.cancel}</button>
-                        <button onClick={() => handleSaveWithNavigation('close')} disabled={isSaving} className="flex-[2] py-3 md:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-xl font-medium shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-transform active:scale-95 disabled:opacity-70 disabled:scale-100">{isSaving ? <RefreshCw className="w-4 h-4 animate-spin"/> : <Check className="w-4 h-4"/>} {t.save}</button>
+    const handleInputChange = (field: 'w'|'h', valStr: string) => {
+        const val = parseInt(valStr);
+        if (valStr === '') return; 
+        if (!isNaN(val)) setRect(r => ({...r, [field]: Math.max(1, val)}));
+    };
+
+    const ControlPanel = () => (
+        <div className="space-y-4">
+             {activeTab === 'crop' ? (
+                <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-200">
+                    <CompactDirectionControl onMove={handleDirectionMove} label={t.moveSel} centerContent={<span className="text-[10px] text-gray-400">{t.pos}</span>} />
+                    <div className="grid grid-cols-2 gap-3">
+                         <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100"><span className="text-xs text-gray-400">W</span><div className="flex-1 flex justify-between items-center"><button onClick={() => setRect(r => ({...r, w: r.w-1}))} className="w-6 h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">-</button><input type="number" value={Math.round(rect.w)} onChange={(e) => handleInputChange('w', e.target.value)} className="w-12 text-center bg-transparent font-mono font-medium text-sm focus:outline-none appearance-none m-0" /><button onClick={() => setRect(r => ({...r, w: r.w+1}))} className="w-6 h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">+</button></div></div>
+                         <div className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100"><span className="text-xs text-gray-400">H</span><div className="flex-1 flex justify-between items-center"><button onClick={() => setRect(r => ({...r, h: r.h-1}))} className="w-6 h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">-</button><input type="number" value={Math.round(rect.h)} onChange={(e) => handleInputChange('h', e.target.value)} className="w-12 text-center bg-transparent font-mono font-medium text-sm focus:outline-none appearance-none m-0" /><button onClick={() => setRect(r => ({...r, h: r.h+1}))} className="w-6 h-6 flex items-center justify-center bg-white border rounded shadow-sm hover:bg-gray-50">+</button></div></div>
                     </div>
                 </div>
-                <div className="flex-1 bg-gray-100 relative bg-checkerboard cursor-crosshair overflow-hidden order-1 md:order-2 h-1/2 md:h-full touch-none" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} onWheel={(e) => { const d = e.deltaY > 0 ? -0.1 : 0.1; setZoom(z => Math.max(0.1, Math.min(5, z + d))); }}>
-                    <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur p-2 rounded-lg shadow-sm border border-gray-200 flex gap-3 text-xs font-medium text-gray-500">
-                        <span className={`flex items-center gap-1 ${tool === 'move' ? 'text-indigo-600 font-bold' : ''}`}><Move className="w-3 h-3" /> {t.dragMove}</span><span className="w-px bg-gray-300 h-4 self-center" /><span className={`flex items-center gap-1 ${tool === 'pan' ? 'text-indigo-600 font-bold' : ''}`}><Hand className="w-3 h-3" /> {t.spacePan}</span>
+            ) : (
+                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
+                    <CompactDirectionControl onMove={handleDirectionMove} label={t.moveContent} centerContent={<Move className="w-4 h-4 text-indigo-500" />} />
+                    <div className="flex items-center gap-3"><label className={`flex-1 flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all ${isSquare ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-500' : 'bg-white border-gray-200'}`}><input type="checkbox" checked={isSquare} onChange={(e) => !isFixedSize && handleIsSquareChange(e.target.checked)} disabled={isFixedSize} className="w-4 h-4 text-indigo-600 rounded" /><span className="text-sm font-bold text-gray-800">{t.autoSquare}</span></label><div className="flex gap-1"><button onClick={() => handleBgChange('transparent')} className={`h-10 px-3 rounded-lg border flex items-center justify-center ${bgColor === 'transparent' ? 'bg-checkerboard border-indigo-500' : 'bg-gray-50'}`}><div className="w-3 h-3 border bg-white/50" /></button><button onClick={() => handleBgChange('white')} className={`h-10 px-3 rounded-lg border flex items-center justify-center ${bgColor === 'white' ? 'bg-white border-indigo-500' : 'bg-gray-50'}`}><div className="w-3 h-3 border bg-white" /></button></div></div>
+                </div>
+            )}
+        </div>
+    );
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-100 md:bg-black/80 md:backdrop-blur-sm">
+            <div className="bg-white w-full h-full flex flex-col md:max-w-5xl md:h-[85vh] md:rounded-xl md:flex-row md:overflow-hidden relative">
+                
+                {/* Mobile Header */}
+                <div className="md:hidden h-14 border-b border-gray-200 flex items-center justify-between px-4 bg-white z-20 shrink-0">
+                     <button onClick={onClose} className="p-2 -ml-2 text-gray-500"><X className="w-6 h-6" /></button>
+                     <div className="flex items-center gap-4">
+                        <button onClick={() => handleSaveWithNavigation('prev')} disabled={!hasPrev} className="p-2 text-gray-600 disabled:opacity-30"><ChevronLeft className="w-6 h-6" /></button>
+                        <button onClick={() => handleSaveWithNavigation('next')} disabled={!hasNext} className="p-2 text-gray-600 disabled:opacity-30"><ChevronRight className="w-6 h-6" /></button>
+                     </div>
+                     <button onClick={() => handleSaveWithNavigation('close')} className="text-indigo-600 font-bold p-2 -mr-2">{isSaving ? <RefreshCw className="w-5 h-5 animate-spin"/> : <Check className="w-6 h-6"/>}</button>
+                </div>
+
+                {/* Desktop Sidebar (Hidden on Mobile) */}
+                <div className="hidden md:flex w-80 bg-white border-r border-gray-200 flex-col">
+                    <div className="p-4 border-b border-gray-200 flex items-center justify-between"><h3 className="font-bold text-lg flex items-center gap-2 text-gray-800"><Pencil className="w-5 h-5 text-indigo-600" /> {t.fineTune}</h3><div className="flex gap-1"><button onClick={() => handleSaveWithNavigation('prev')} disabled={!hasPrev} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronLeft className="w-5 h-5" /></button><button onClick={() => handleSaveWithNavigation('next')} disabled={!hasNext} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronRight className="w-5 h-5" /></button><div className="w-px h-6 bg-gray-200 mx-1"></div><button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded text-gray-500"><X className="w-5 h-5" /></button></div></div>
+                    <div className="flex border-b border-gray-200"><button onClick={() => setActiveTab('crop')} className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 ${activeTab === 'crop' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-gray-500'}`}><CropIcon className="w-4 h-4" /> {t.cropTab}</button><button onClick={() => setActiveTab('layout')} className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 ${activeTab === 'layout' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-gray-500'}`}><Layout className="w-4 h-4" /> {t.canvasTab}</button></div>
+                    <div className="flex-1 overflow-y-auto p-6 space-y-6"><ControlPanel /></div>
+                    <div className="p-5 border-t border-gray-200 bg-gray-50 flex gap-3"><button onClick={onClose} className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl font-medium hover:bg-white">{t.cancel}</button><button onClick={() => handleSaveWithNavigation('close')} disabled={isSaving} className="flex-[2] py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-xl font-medium shadow-lg shadow-indigo-200 flex items-center justify-center gap-2">{isSaving ? <RefreshCw className="w-4 h-4 animate-spin"/> : <Check className="w-4 h-4"/>} {t.save}</button></div>
+                </div>
+                
+                {/* Main Canvas Area */}
+                <div className="flex-1 bg-gray-100 relative bg-checkerboard cursor-crosshair overflow-hidden touch-none" 
+                     onPointerDown={handlePointerDown} 
+                     onPointerMove={handlePointerMove} 
+                     onPointerUp={handlePointerUp} 
+                     onPointerLeave={handlePointerUp}>
+                    
+                    {/* Desktop Zoom Hints */}
+                    <div className="hidden md:flex absolute top-4 left-4 z-10 bg-white/90 backdrop-blur p-2 rounded-lg shadow-sm border border-gray-200 gap-3 text-xs font-medium text-gray-500">
+                        <span className={`flex items-center gap-1 ${tool === 'move' ? 'text-indigo-600 font-bold' : ''}`}><Move className="w-3 h-3" /> {t.dragMove}</span>
                     </div>
+
                     <div className="w-full h-full flex items-center justify-center transition-transform duration-75 ease-out" style={{ transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${zoom})` }}>
                         <div className="bg-white shadow-2xl border border-gray-300 relative"> 
-                            <canvas ref={canvasRef} className="block" />
+                            <canvas ref={canvasRef} className="block pointer-events-none" />
                             {activeTab === 'crop' && <div className="absolute inset-0 border-2 border-indigo-500 pointer-events-none opacity-50"><div className="absolute top-0 left-0 bg-indigo-500 text-white text-[10px] px-1">{t.sourceGuide}</div></div>}
                         </div>
                     </div>
-                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2">
-                        <button onClick={() => setZoom(z => z - 0.1)} className="p-2 bg-white rounded-full shadow hover:bg-gray-50 text-gray-600"><ZoomOut className="w-4 h-4" /></button><span className="px-3 py-2 bg-white rounded-full shadow text-xs font-mono text-gray-600 flex items-center">{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(z => z + 0.1)} className="p-2 bg-white rounded-full shadow hover:bg-gray-50 text-gray-600"><ZoomIn className="w-4 h-4" /></button>
+                    
+                    {/* Zoom Controls */}
+                    <div className="absolute bottom-6 md:bottom-6 right-4 md:left-1/2 md:-translate-x-1/2 flex flex-col md:flex-row gap-2 z-20">
+                         <button onClick={() => setZoom(z => z + 0.1)} className="p-3 bg-white rounded-full shadow-lg text-gray-600 active:bg-gray-100"><ZoomIn className="w-5 h-5" /></button>
+                         <button onClick={() => setZoom(z => z - 0.1)} className="p-3 bg-white rounded-full shadow-lg text-gray-600 active:bg-gray-100"><ZoomOut className="w-5 h-5" /></button>
                     </div>
                 </div>
+
+                {/* Mobile Bottom Controls */}
+                <div className="md:hidden bg-white border-t border-gray-200 flex flex-col shrink-0 pb-safe safe-area-bottom z-30">
+                    <div className="p-4 bg-gray-50 border-b border-gray-200 max-h-48 overflow-y-auto">
+                        <ControlPanel />
+                    </div>
+                    <div className="flex h-12">
+                        <button onClick={() => setActiveTab('crop')} className={`flex-1 text-xs font-medium flex items-center justify-center gap-2 ${activeTab === 'crop' ? 'text-indigo-600 bg-indigo-50/50 border-t-2 border-indigo-600' : 'text-gray-500'}`}><CropIcon className="w-4 h-4" /> {t.cropTab}</button>
+                        <button onClick={() => setActiveTab('layout')} className={`flex-1 text-xs font-medium flex items-center justify-center gap-2 ${activeTab === 'layout' ? 'text-indigo-600 bg-indigo-50/50 border-t-2 border-indigo-600' : 'text-gray-500'}`}><Layout className="w-4 h-4" /> {t.canvasTab}</button>
+                    </div>
+                </div>
+
             </div>
         </div>
     );
@@ -868,10 +962,10 @@ const ResultsGallery = ({
         <div className="fixed inset-0 z-[60] bg-gray-100 flex flex-col animate-in fade-in duration-300">
             <div className="bg-white shadow-sm border-b border-gray-200 p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3"><button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600"><ArrowLeft className="w-5 h-5" /></button><h2 className="text-xl font-bold text-gray-800">{t.resultsTitle} <span className="ml-2 text-sm font-normal text-gray-500">({results.length} {t.images})</span></h2></div>
-                <div className="flex gap-3"><button onClick={onDownloadAll} className="px-4 py-2.5 md:px-5 md:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-200 font-medium flex items-center gap-2 transition-transform active:scale-95 text-sm md:text-base"><Download className="w-4 h-4" /> {t.downloadAll}</button></div>
+                <div className="flex gap-3"><button onClick={onDownloadAll} className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-lg shadow-indigo-200 font-medium flex items-center gap-2 transition-transform active:scale-95"><Download className="w-4 h-4" /> {t.downloadAll}</button></div>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 md:p-8">
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 md:gap-6">
+            <div className="flex-1 overflow-y-auto p-8">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
                     {results.map((res) => (
                         <div key={res.id} className="group relative bg-white rounded-xl shadow-sm border border-gray-200 aspect-square flex flex-col transition-all hover:shadow-md hover:border-indigo-300">
                             <div className="flex-1 p-4 flex items-center justify-center bg-checkerboard rounded-t-xl overflow-hidden"><img src={res.dataUrl} className="max-w-full max-h-full object-contain shadow-sm" alt="" /></div>
@@ -915,7 +1009,6 @@ export const App = () => {
     const [lang, setLang] = useState<Lang>('en');
     const t: any = translations[lang];
 
-    // Refs for keyboard adjustment
     const rowPositionsRef = useRef(rowPositions);
     const colPositionsRef = useRef(colPositions);
     
@@ -957,38 +1050,12 @@ export const App = () => {
             if (selectedLine) {
                 if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
                     e.preventDefault();
-                    const step = e.shiftKey ? 2 : 0.2;
-                    let newRP = [...rowPositionsRef.current];
-                    let newCP = [...colPositionsRef.current];
-                    let changed = false;
-                    if (selectedLine.type === 'row') {
-                        const idx = selectedLine.index;
-                        if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-                            const limit = idx > 0 ? newRP[idx-1] : -10;
-                            const newVal = Math.max(limit + 0.1, newRP[idx] - step);
-                            if (newVal !== newRP[idx]) { newRP[idx] = Number(newVal.toFixed(2)); changed = true; }
-                        } else {
-                            const limit = idx < newRP.length - 1 ? newRP[idx+1] : 110;
-                            const newVal = Math.min(limit - 0.1, newRP[idx] + step);
-                            if (newVal !== newRP[idx]) { newRP[idx] = Number(newVal.toFixed(2)); changed = true; }
-                        }
-                    } else {
-                        const idx = selectedLine.index;
-                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                            const limit = idx > 0 ? newCP[idx-1] : -10;
-                            const newVal = Math.max(limit + 0.1, newCP[idx] - step);
-                            if (newVal !== newCP[idx]) { newCP[idx] = Number(newVal.toFixed(2)); changed = true; }
-                        } else {
-                            const limit = idx < newCP.length - 1 ? newCP[idx+1] : 110;
-                            const newVal = Math.min(limit - 0.1, newCP[idx] + step);
-                            if (newVal !== newCP[idx]) { newCP[idx] = Number(newVal.toFixed(2)); changed = true; }
-                        }
-                    }
-                    if (changed) {
-                        setRowPositions(newRP);
-                        setColPositions(newCP);
-                        addToHistory({ rows, cols, rowPositions: newRP, colPositions: newCP });
-                    }
+                    // Map Arrow keys to nudge direction for desktop keyboard users
+                    const dirMap: Record<string, 'up'|'down'|'left'|'right'> = {
+                        'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right'
+                    };
+                    const dir = dirMap[e.key];
+                    if(dir) handleNudge(dir, e.shiftKey, selectedLine);
                 }
             }
         };
@@ -1009,10 +1076,8 @@ export const App = () => {
                 setColPositions(initC);
                 setHistory([{ rows: 4, cols: 4, rowPositions: initR, colPositions: initC }]);
                 setHistoryIndex(0);
-                // Auto close sidebar on mobile to show image
-                if (window.innerWidth < 768) {
-                    setSidebarOpen(false);
-                }
+                // On mobile, auto-close sidebar after upload to show preview
+                if (window.innerWidth < 768) setSidebarOpen(false);
             };
             img.src = url;
         }
@@ -1058,53 +1123,74 @@ export const App = () => {
         }
     };
 
-    // Use PointerEvent for better mobile support
-    const onLineDragStart = (e: PointerEvent, type: 'row' | 'col', index: number) => {
+    const updateLinePosition = (type: 'row'|'col', index: number, newPct: number) => {
+        const pct = Math.max(0, Math.min(100, newPct));
+        if (type === 'row') { 
+            setRowPositions(prev => { 
+                const next = [...prev]; next[index] = Number(pct.toFixed(2)); 
+                return next.sort((a,b) => a-b); 
+            }); 
+        } else { 
+            setColPositions(prev => { 
+                const next = [...prev]; next[index] = Number(pct.toFixed(2)); 
+                return next.sort((a,b) => a-b); 
+            }); 
+        }
+    };
+
+    const onLineDragStart = (e: React.PointerEvent, type: 'row' | 'col', index: number) => {
         e.preventDefault();
         e.stopPropagation();
-        const target = e.currentTarget as HTMLElement;
-        target.setPointerCapture(e.pointerId);
-        
-        const container = target.parentElement;
+        const container = (e.currentTarget as HTMLElement).parentElement;
         if (!container) return;
+        const targetElement = e.currentTarget as HTMLElement;
+        targetElement.setPointerCapture(e.pointerId);
+        
         const rect = container.getBoundingClientRect();
         
-        const handleMove = (ev: globalThis.PointerEvent) => {
+        const handleMove = (ev: PointerEvent) => {
             const isRow = type === 'row';
             const clientPos = isRow ? ev.clientY : ev.clientX;
             const startPos = isRow ? rect.top : rect.left;
             const dimension = isRow ? rect.height : rect.width;
-            let pct = ((clientPos - startPos) / dimension) * 100;
-            pct = Math.max(0, Math.min(100, pct));
-            if (isRow) { setRowPositions(prev => { const next = [...prev]; next[index] = pct; return next.sort((a,b) => a-b); }); }
-            else { setColPositions(prev => { const next = [...prev]; next[index] = pct; return next.sort((a,b) => a-b); }); }
+            const pct = ((clientPos - startPos) / dimension) * 100;
+            updateLinePosition(type, index, pct);
         };
-        
-        const handleUp = (ev: globalThis.PointerEvent) => { 
-            window.removeEventListener('pointermove', handleMove); 
-            window.removeEventListener('pointerup', handleUp); 
-            if (target.hasPointerCapture(ev.pointerId)) {
-                target.releasePointerCapture(ev.pointerId);
-            }
-            addToHistory({ rows, cols, rowPositions, colPositions }); 
+
+        const handleUp = (ev: PointerEvent) => {
+             try { targetElement.releasePointerCapture(ev.pointerId); } catch(err) { console.warn("Failed to release capture", err); }
+             window.removeEventListener('pointermove', handleMove); 
+             window.removeEventListener('pointerup', handleUp); 
+             addToHistory({ 
+                 rows, 
+                 cols, 
+                 rowPositions: rowPositionsRef.current, 
+                 colPositions: colPositionsRef.current 
+             }); 
         };
-        
         window.addEventListener('pointermove', handleMove); 
         window.addEventListener('pointerup', handleUp);
+    };
+
+    const handleNudge = (dir: 'up'|'down'|'left'|'right', fast: boolean, line: {type:'row'|'col', index:number}) => {
+        const step = fast ? 2.0 : 0.2;
+        const currentArr = line.type === 'row' ? rowPositions : colPositions;
+        const currentVal = currentArr[line.index];
+        let newVal = currentVal;
+        if (line.type === 'row') {
+            if (dir === 'up') newVal -= step;
+            if (dir === 'down') newVal += step;
+        } else {
+            if (dir === 'left') newVal -= step;
+            if (dir === 'right') newVal += step;
+        }
+        updateLinePosition(line.type, line.index, newVal);
     };
 
     const handleSplit = async () => {
         if (!imageElement) return;
         setIsProcessing(true);
-        // Ensure sidebar is closed on mobile when splitting to show results
-        if (window.innerWidth < 768) {
-            setSidebarOpen(false);
-        }
-        
         try {
-            // Small delay to allow UI to update (close sidebar) before heavy work
-            await new Promise(r => setTimeout(r, 50));
-            
             const newResults: SplitResult[] = [];
             const sortedRows = [...rowPositions].sort((a, b) => a - b);
             const sortedCols = [...colPositions].sort((a, b) => a - b);
@@ -1150,8 +1236,15 @@ export const App = () => {
     const handlePrevEdit = () => { if (!editingResult || !results) return; const idx = results.findIndex(r => r.id === editingResult.id); if (idx > 0) setEditingResult(results[idx - 1]); };
 
     return (
-        <div className="flex h-screen w-full bg-gray-100 text-gray-900 font-sans selection:bg-indigo-100 selection:text-indigo-700 overflow-hidden">
-            <div className="flex-1 flex justify-center h-full w-full bg-white shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 w-full h-full bg-gray-100 text-gray-900 font-sans selection:bg-indigo-100 selection:text-indigo-700 overflow-hidden flex flex-col">
+            <div className="flex-1 flex justify-center h-full max-w-[1600px] mx-auto bg-white shadow-2xl overflow-hidden relative w-full">
+                
+                {/* Mobile Backdrop for Sidebar */}
+                <div 
+                    className={`fixed inset-0 bg-black/40 z-40 transition-opacity duration-300 md:hidden ${sidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+                    onClick={() => setSidebarOpen(false)}
+                />
+
                 <Sidebar 
                     onUpload={handleUpload}
                     rows={rows} setRows={handleRowChange}
@@ -1168,19 +1261,20 @@ export const App = () => {
                     t={t}
                     lang={lang}
                     setLang={setLang}
+                    selectedLine={selectedLine}
+                    onNudge={handleNudge}
                 />
-                <div className="flex-1 flex flex-col relative overflow-hidden">
+                <div className="flex-1 flex flex-col relative overflow-hidden min-h-0">
                     <PreviewArea 
                         imageSrc={imageSrc} rows={rows} cols={cols} rowPositions={rowPositions} colPositions={colPositions}
                         paddingX={paddingX} paddingY={paddingY} onLineDragStart={onLineDragStart} selectedLine={selectedLine} setSelectedLine={setSelectedLine}
                         sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
                         t={t}
-                        imageElement={imageElement}
                     />
                     
                     {/* Mobile Bottom Navigation Bar */}
-                    <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-gray-200 z-40 flex items-center justify-between px-6 pb-safe">
-                        <div className="relative flex flex-col items-center justify-center gap-1 text-gray-500 hover:text-indigo-600">
+                    <div className="md:hidden h-16 bg-white border-t border-gray-200 z-30 shrink-0 flex items-center justify-between px-6 pb-safe safe-area-bottom relative">
+                        <div className="relative flex flex-col items-center justify-center gap-1 text-gray-500 hover:text-indigo-600 active:text-indigo-600 transition-colors">
                             <input type="file" accept="image/*" onChange={handleUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                             <Upload className="w-5 h-5" />
                             <span className="text-[10px] font-medium">{t.upload}</span>
@@ -1188,7 +1282,7 @@ export const App = () => {
                         
                         <button 
                             onClick={() => setSidebarOpen(!sidebarOpen)} 
-                            className={`flex flex-col items-center justify-center gap-1 ${sidebarOpen ? 'text-indigo-600' : 'text-gray-500 hover:text-indigo-600'}`}
+                            className={`flex flex-col items-center justify-center gap-1 transition-colors ${sidebarOpen ? 'text-indigo-600' : 'text-gray-500 hover:text-indigo-600'}`}
                         >
                             <Sliders className="w-5 h-5" />
                             <span className="text-[10px] font-medium">{t.adjust}</span>
@@ -1197,7 +1291,7 @@ export const App = () => {
                         <button 
                             onClick={handleSplit}
                             disabled={!imageSrc || isProcessing}
-                            className={`flex flex-col items-center justify-center gap-1 font-bold ${!imageSrc || isProcessing ? 'text-gray-300' : 'text-indigo-600'}`}
+                            className={`flex flex-col items-center justify-center gap-1 font-bold transition-colors ${!imageSrc || isProcessing ? 'text-gray-300' : 'text-indigo-600 active:scale-95'}`}
                         >
                             {isProcessing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Scissors className="w-5 h-5" />}
                             <span className="text-[10px] font-medium">{t.splitBtn}</span>
